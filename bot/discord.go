@@ -128,7 +128,92 @@ func dMessageCreate(s *discord.Session, m *discord.MessageCreate) {
 	for _, a := range m.Attachments {
 		incomingDiscord(authorName, channel, a.ProxyURL)
 	}
+	if m.Embeds != nil && len(m.Embeds) != 0 {
+		for _, e := range m.Embeds {
+			ircColor := colorToIRCCompatible(e.Color)
+
+			description := linkRegex.ReplaceAllString(e.Description, "$1 <$2>")
+
+			incomingDiscord(authorName, channel, fmt.Sprintf("\x03%02d╽\x03 %s <%s>", ircColor, e.Author.Name, e.Author.URL))
+			incomingDiscord(authorName, channel, fmt.Sprintf("\x03%02d┃\x03 %s <%s>", ircColor, e.Title, e.URL))
+
+			lines := strings.Split(description, "\n")
+			lines, forceClip := clipLinesForIRC(lines)
+			if len(lines) > 3 || forceClip {
+				url := uploadToPtpb(description)
+
+				n := 2
+				if len(lines) < 2 {
+					n = len(lines)
+				}
+
+				for _, line := range lines[:n] {
+					incomingDiscord(authorName, channel, fmt.Sprintf("\x03%02d┃\x03 %s", ircColor, line))
+				}
+				incomingDiscord("[SYSTEM]", channel, fmt.Sprintf("\x03%02d╿\x03 full message from %s: %s", ircColor, iAddAntiPing(authorName), url))
+			} else {
+				for i, line := range lines {
+					if i == len(lines)-1 {
+						incomingDiscord(authorName, channel, fmt.Sprintf("\x03%02d╿\x03 %s", ircColor, line))
+					} else {
+						incomingDiscord(authorName, channel, fmt.Sprintf("\x03%02d┃\x03 %s", ircColor, line))
+					}
+				}
+			}
+		}
+	}
 }
+
+var linkRegex = regexp.MustCompile(`\[([^][]+)\]\(([^()]+)\)`)
+
+var ircColors = [][3]uint8{
+	{0xFF, 0xFF, 0xFF},
+	{0x00, 0x00, 0x00},
+	{0x00, 0x00, 0xAA},
+	{0x00, 0xAA, 0x00},
+	{0xFF, 0x55, 0x55},
+	{0xAA, 0x00, 0x00},
+	{0xAA, 0x00, 0xAA},
+	{0xFF, 0x55, 0x55},
+	{0xFF, 0xFF, 0x55},
+	{0x55, 0xFF, 0x55},
+	{0x00, 0xAA, 0xAA},
+	{0x55, 0xFF, 0xFF},
+	{0x55, 0x55, 0xFF},
+	{0xFF, 0x55, 0xFF},
+	{0x55, 0x55, 0x55},
+	{0xAA, 0xAA, 0xAA},
+}
+
+func difference(a, b uint8) (diff uint32) {
+	if a > b {
+		diff = uint32(a - b)
+	} else {
+		diff = uint32(b - a)
+	}
+
+	diff *= diff
+	return
+}
+
+func colorToIRCCompatible(color int) uint8 {
+	red := uint8(color >> 16)
+	green := uint8(color >> 8)
+	blue := uint8(color)
+
+	minDistance := uint32(0xFFFFFFFF)
+	minIndex := uint8(0)
+	for i, col := range ircColors {
+		distance := difference(red, col[0]) + difference(green, col[1]) + difference(blue, col[2])
+		if distance < minDistance {
+			minDistance = distance
+			minIndex = uint8(i)
+		}
+	}
+
+	return minIndex
+}
+
 func convertMentionsForIRC(g *discord.Guild, m *discord.MessageCreate) string {
 	message := m.Content
 
